@@ -1,0 +1,67 @@
+#!/bin/sh
+
+state=0
+msg=""
+
+set_state ()
+{
+    if test $1 -gt $state
+    then
+	state=$1
+    fi
+    msg="$msg
+$2"
+}
+
+for dir in /sys/block/md*/md
+do
+    md=`echo "$dir" | sed -e 's%/sys/block/%%' -e 's%/md%%'`
+
+    degraded=`cat "$dir/degraded"`
+    if [ $degraded != 0 ]
+    then
+	set_state 2 "$md has $degraded degraded devices"
+    else
+	set_state 0 "$md has no degraded devices"
+    fi
+
+    array_state=`cat "$dir/array_state"`
+    case $array_state in
+	clean|active|active-idle)
+	    set_state 0 "$md array_state is $array_state"
+	    ;;
+	*)
+	    set_state 2 "$md array_state is $array_state"
+	    ;;
+    esac
+
+    for devdir in $dir/dev-*
+    do
+	dev_state=`cat $devdir/state`
+	dev=`echo $devdir|sed -e 's%.*/dev-%%'`
+	case $dev_state in
+	    in_sync|writemostly|spare)
+		set_state 0 "$md dev $dev state is $dev_state"
+		;;
+	    *)
+		set_state 2 "$md dev $dev state is $dev_state"
+		;;
+	esac
+
+	errors=`cat $devdir/errors`
+	if [ $errors != 0 ]
+	then
+	    set_state 1 "$md dev $dev has seen $errors errors"
+	else
+	    set_state 0 "$md dev $dev has not seen any errors"
+	fi
+    done
+done
+
+case $state in
+    0) echo "OK - all MD devices are OK$msg";;
+    1) echo "WARNING - at least one device has seen errors$msg";;
+    2) echo "CRITICAL - at leat one MD device has issues$msg";;
+    *) echo "UNKNOWN$msg";;
+esac
+exit $state
